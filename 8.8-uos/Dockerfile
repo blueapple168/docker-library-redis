@@ -3,16 +3,14 @@
 # Base: uos-server-20-1070a:latest (x86_64/arm64)
 # ============================================================
 # 使用说明：
-#   构建: docker build -t redis-uos:8.8.2 .
+#   构建: docker buildx build --platform linux/amd64,linux/arm64 -t redis-uos:8.8.2 .
 #   运行: docker run -d --name redis redis-uos:8.8.2
 # ============================================================
-
 ARG REDIS_VERSION=8.8.2
 ARG YQ_VERSION=v4.53.6
 ARG BASE_IMAGE_TAG=uos-server-20-1070a:latest
 
 FROM ghcr.io/blueapple168/${BASE_IMAGE_TAG} AS builder
-
 LABEL maintainer="blueapple" \
       version="1.0" \
       description="Redis 8.8.2 with RedisJSON on UOS 1070a" \
@@ -71,41 +69,59 @@ RUN set -eux && \
     make -j "$(nproc)" all && \
     make install && \
     # ==========================================
-    # 重要：distclean 前先备份需要复制的文件
+    # 输出目录：改用 /output，避开 /tmp/* 清理误伤
     # ==========================================
-    mkdir -p /tmp/redis-backup && \
-    cp -a /usr/local/bin/redis-* /tmp/redis-backup/ && \
-    cp -a /usr/local/share/redis /tmp/redis-backup/ 2>/dev/null || mkdir -p /tmp/redis-backup/redis; \
-    cp -a /usr/local/etc/redis /tmp/redis-backup/ 2>/dev/null || mkdir -p /tmp/redis-backup/redis; \
-    cp -a /usr/local/lib/redis /tmp/redis-backup/ 2>/dev/null || mkdir -p /tmp/redis-backup/redis; \
+    mkdir -p /output/{bin,share,etc,lib,modules} && \
+    cp -a /usr/local/bin/redis-* /output/bin/ && \
+    cp -a /usr/local/share/redis /output/share/ 2>/dev/null || true && \
+    cp -a /usr/local/etc/redis /output/etc/ 2>/dev/null || true && \
+    cp -a /usr/local/lib/redis /output/lib/ 2>/dev/null || true && \
     if [ "$ARCH" = "amd64" ] || [ "$ARCH" = "arm64" ]; then \
-        mkdir -p /tmp/redis-backup/modules && \
-        cp /usr/src/redis/modules/redisjson/src/target/release/*.so /tmp/redis-backup/modules/ 2>/dev/null || true; \
+        cp /usr/src/redis/modules/redisjson/src/target/release/*.so /output/modules/; \
     fi && \
-    cp -a /etc/ssl /tmp/redis-backup/ 2>/dev/null || true && \
-    make distclean || true && \
-    groupadd -r "${APP_USER}" -g 1000 || true && \
-    useradd -r -u 1000 -g "${APP_USER}" -d "/data" -s /bin/bash "${APP_USER}" || true && \
-    mkdir -p /data && chown redis:redis /data && \
-    yum clean all && \
-    rm -rf /var/cache/yum/* /var/tmp/* /tmp/* /root/.cargo/registry/* /root/.cargo/git/* ~/.cache ~/.gitconfig /usr/src/redis /usr/local/bin/* /usr/local/lib/* /usr/local/share/redis /usr/local/etc/redis
+    make distclean || true
 
+# builder阶段清理：不触碰/output目录！只清理/tmp，保留/output
+RUN set -eux; \
+    yum clean all; \
+    rm -rf \
+        /var/cache/yum/* \
+        /var/tmp/* \
+        /tmp/* \
+        /root/.cargo/registry/* \
+        /root/.cargo/git/* \
+        /root/.cache \
+        /root/.gitconfig \
+        /usr/src/redis
+
+# ---------------- 最终镜像 ----------------
 FROM ghcr.io/blueapple168/${BASE_IMAGE_TAG}
-
 LABEL maintainer="blueapple" version="1.0" description="Redis 8.8.2 with RedisJSON on UOS 1070a"
 
 ENV TZ=Asia/Shanghai APP_USER=redis PATH=/usr/local/bin:/usr/bin:/usr/sbin:/sbin
 
-COPY --from=builder /tmp/redis-backup/ /usr/local/
+# 最终镜像创建redis用户（builder的用户不会继承过来，必须在最终镜像创建）
+RUN set -eux; \
+    groupadd -r "${APP_USER}" -g 1000 || true; \
+    useradd -r -u 1000 -g "${APP_USER}" -d "/data" -s /bin/bash "${APP_USER}" || true; \
+    mkdir -p /data && chown redis:redis /data
+
+# 从builder复制编译产物
+COPY --from=builder /output/bin/redis-* /usr/local/bin/
+COPY --from=builder /output/share/redis /usr/local/share/redis
+COPY --from=builder /output/etc/redis /usr/local/etc/redis
+COPY --from=builder /output/lib/redis /usr/local/lib/redis
+COPY --from=builder /output/modules /usr/local/lib/redis/modules
+
 COPY --from=builder /data /data
 
-RUN mkdir -p /usr/local/bin /data && \
-    chown -R redis:redis /data && \
-    chmod +x /usr/local/bin/redis-* && \
+RUN set -eux; \
+    chmod +x /usr/local/bin/redis-*; \
     yum clean all 2>/dev/null || true
 
 WORKDIR /data
 EXPOSE 6379
+
 COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["redis-server"]
