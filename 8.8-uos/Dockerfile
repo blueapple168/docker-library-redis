@@ -112,6 +112,8 @@ RUN set -eux; \
     id redis; \
     mkdir -p /data /usr/local/lib/redis/modules; \
     chown redis:redis /data; \
+    sed -i 's/\$StateMode/ufu/g' /etc/yum.repos.d/UnionTechOS.repo; \
+    yum makecache; \
     yum install -y --setopt=install_weak_deps=false --nogpgcheck --nodocs util-linux curl findutils; \
     yum clean all; rm -rf /var/cache/yum/*
 
