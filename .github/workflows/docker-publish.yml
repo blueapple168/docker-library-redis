@@ -64,7 +64,6 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: 8.8-uos
-          # 支持 workflow_dispatch 控制推送；PR不推送
           push: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push_to_registry) }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
@@ -78,8 +77,6 @@ jobs:
           platforms: |
             linux/amd64
           no-cache: true
-          # 移除 push-by-digest=true，否则tags不会写入镜像
-          # outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true
       - name: Build summary
         run: |
           echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
@@ -96,7 +93,6 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          # 使用digest，不依赖tag
           image-ref: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
           format: 'sarif'
           output: 'trivy-results.sarif'
@@ -104,7 +100,10 @@ jobs:
           exit-code: '0'
           ignore-unfixed: true
           args: |
-            --os-type linux
+            --os-family rhel
+            --os-version 8
+            --pkg-types rpm
+            --ignore-unfixed
             --no-progress
       - name: Upload Trivy scan results
         uses: github/codeql-action/upload-sarif@v3
@@ -123,20 +122,52 @@ jobs:
           docker pull --platform linux/amd64 ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
       - name: Run health check
         run: |
-          docker run --rm -d --name redis-test --platform linux/amd64 \
-            -e TZ=Asia/Shanghai \
-            ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
-          sleep 5
-          docker exec redis-test redis-cli ping
-          docker stop redis-test || true
+          set -e
+          IMG=${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+          CID=$(docker run --rm -d --platform linux/amd64 -e TZ=Asia/Shanghai "${IMG}")
+          echo "Container ID: ${CID}"
+          for i in {1..15}; do
+            STATUS=$(docker inspect -f '{{.State.Status}}' "${CID}" 2>/dev/null || true)
+            echo "Wait ${i}/15 status=${STATUS}"
+            if [[ "${STATUS}" == "running" ]]; then
+              break
+            fi
+            if [[ "${STATUS}" == "exited" || -z "${STATUS}" ]]; then
+              echo "==== Container crash log ===="
+              docker logs "${CID}" 2>&1
+              echo "=============================="
+              docker rm -f "${CID}" || true
+              exit 1
+            fi
+            sleep 1
+          done
+          docker exec "${CID}" redis-cli ping
+          docker stop "${CID}" || true
       - name: Test RedisJSON module
         run: |
-          docker run --rm -d --name redis-json-test --platform linux/amd64 \
-            ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
-          sleep 5
-          docker exec redis-json-test redis-cli JSON.SET test '{"hello":"world"}' || echo "RedisJSON not available"
-          docker exec redis-json-test redis-cli PING
-          docker stop redis-json-test || true
+          set -e
+          IMG=${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+          CID=$(docker run --rm -d --platform linux/amd64 "${IMG}")
+          echo "Container ID: ${CID}"
+          for i in {1..15}; do
+            STATUS=$(docker inspect -f '{{.State.Status}}' "${CID}" 2>/dev/null || true)
+            echo "Wait ${i}/15 status=${STATUS}"
+            if [[ "${STATUS}" == "running" ]]; then
+              break
+            fi
+            if [[ "${STATUS}" == "exited" || -z "${STATUS}" ]]; then
+              echo "==== Container crash log ===="
+              docker logs "${CID}" 2>&1
+              echo "=============================="
+              docker rm -f "${CID}" || true
+              exit 1
+            fi
+            sleep 1
+          done
+          docker exec "${CID}" redis-cli JSON.SET test '{"hello":"world"}'
+          docker exec "${CID}" redis-cli JSON.GET test
+          docker exec "${CID}" redis-cli PING
+          docker stop "${CID}" || true
 
   release:
     runs-on: ubuntu-latest
