@@ -82,7 +82,6 @@ jobs:
             BASE_IMAGE_TAG=uos-server-20-1070a:latest
           platforms: |
             linux/amd64
-            # linux/arm64
           no-cache: true
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true
 
