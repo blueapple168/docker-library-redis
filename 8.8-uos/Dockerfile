@@ -22,7 +22,7 @@ FROM ghcr.io/blueapple168/${BASE_IMAGE_TAG} AS builder
 LABEL maintainer="blueapple" \
       version="1.0" \
       description="Redis 8.8.2 with RedisJSON on UOS 1070a" \
-      org.opencontainers.image.base.name="uos-server-20-1070a:latest" \
+      org.opencontainers.image.base.name="registry.uniontech.com/uos-server-base/uos-server-20-1070a:latest" \
       org.opencontainers.image.description="Redis packaged on UOS 10700a" \
       org.opencontainers.image.title="Redis" \
       org.opencontainers.image.version="${REDIS_VERSION}"
