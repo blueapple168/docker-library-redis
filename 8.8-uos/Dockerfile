@@ -16,7 +16,7 @@ ARG BASE_IMAGE_TAG=uos-server-20-1070a:latest
 # ============================================================
 # 第一阶段：基础镜像
 # ============================================================
-FROM ${BASE_IMAGE_TAG}
+FROM ghcr.io/blueapple168/${BASE_IMAGE_TAG} AS builder
 
 # 维护者信息
 LABEL maintainer="blueapple" \
