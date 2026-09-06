@@ -5,6 +5,17 @@ IS_REDIS_SENTINEL=""
 IS_REDIS_SERVER=""
 CONFIG=""
 SKIP_FIX_PERMS_NOTICE="Use SKIP_FIX_PERMS=1 to skip permission changes."
+
+# 检测当前setpriv是否支持 "-all" capability语法（UOS旧libcap‑ng不支持）
+setpriv_support_all_caps() {
+    # 尝试执行帮助输出看是否识别‑‑bounding‑set=-all，失败返回非0
+    if /bin/setpriv --bounding-set=-all --help >/dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 # functions
 has_cap() {
 	/bin/setpriv -d | grep -q 'Capability bounding set:.*\b'"$1"'\b'
@@ -103,18 +114,25 @@ if [ "$IS_REDIS_SERVER" ] && [ -z "$SKIP_DROP_PRIVS" ] && [ "$(id -u)" = '0' ] &
 			fix_config_perms "$CONFIG" r
 		fi
 	fi
-	CAPS_TO_KEEP=""
-	if has_cap sys_resource; then
-		# we have sys_resource capability, keep it available for redis
-		# as redis may use it to increase open files limit
-		CAPS_TO_KEEP=",+sys_resource"
+
+	# 兼容UOS旧libcap‑ng：不支持‑all关键字时，不传入cap相关参数
+	if setpriv_support_all_caps; then
+		CAPS_TO_KEEP=""
+		if has_cap sys_resource; then
+			# we have sys_resource capability, keep it available for redis
+			# as redis may use it to increase open files limit
+			CAPS_TO_KEEP=",+sys_resource"
+		fi
+		exec $SETPRIV \
+			--nnp \
+			--inh-caps=-all$CAPS_TO_KEEP \
+			--ambient-caps=-all$CAPS_TO_KEEP \
+			--bounding-set=-all$CAPS_TO_KEEP \
+			"$0" "$@"
+	else
+		# UOS旧版setpriv/libcap‑ng：去掉所有‑‑*‑caps / bounding‑set参数，仅切换uid/gid
+		exec $SETPRIV --nnp "$0" "$@"
 	fi
-	exec $SETPRIV \
-		--nnp \
-		--inh-caps=-all$CAPS_TO_KEEP \
-		--ambient-caps=-all$CAPS_TO_KEEP \
-		--bounding-set=-all$CAPS_TO_KEEP \
-		"$0" "$@"
 fi
 # set an appropriate umask (if one isn't set already)
 # - https://github.com/docker‑library/redis/issues/305
