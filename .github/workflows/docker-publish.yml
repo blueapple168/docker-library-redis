@@ -8,7 +8,6 @@ on:
       - '8.8-uos/Dockerfile'
       - '8.8-uos/docker-entrypoint.sh'
       - '.github/workflows/docker-publish.yml'
-  push:
     tags:
       - 'v*'
   pull_request:
@@ -66,7 +65,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ shturl.cc/Lj }}
+          username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
