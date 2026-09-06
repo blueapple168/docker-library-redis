@@ -83,8 +83,7 @@ jobs:
           platforms: |
             linux/amd64
             linux/arm64
-          cache-from: type=gha,scope=${{ github.ref }}
-          cache-to: type=gha,mode=max,scope=${{ github.ref }}
+          no-cache: true
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true
 
       - name: Build summary
