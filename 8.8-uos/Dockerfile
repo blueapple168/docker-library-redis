@@ -112,7 +112,7 @@ RUN set -eux; \
     id redis; \
     mkdir -p /data /usr/local/lib/redis/modules; \
     chown redis:redis /data; \
-    yum install -y --setopt=install_weak_deps=false --nogpgcheck --nodocs tzdata util-linux; \
+    yum install -y --setopt=install_weak_deps=false --nogpgcheck --nodocs util-linux curl findutils; \
     yum clean all; rm -rf /var/cache/yum/*
 
 # 从builder复制编译产物
