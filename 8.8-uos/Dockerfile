@@ -5,218 +5,107 @@
 # 使用说明：
 #   构建: docker build -t redis-uos:8.8.2 .
 #   运行: docker run -d --name redis redis-uos:8.8.2
-#   自定义配置: docker run -d -v /path/to/redis.conf:/usr/local/etc/redis/redis.conf redis-uos:8.8.2 redis-server /usr/local/etc/redis/redis.conf
 # ============================================================
 
-# 全局构建参数
 ARG REDIS_VERSION=8.8.2
 ARG YQ_VERSION=v4.53.6
 ARG BASE_IMAGE_TAG=uos-server-20-1070a:latest
 
-# ============================================================
-# 第一阶段：编译阶段
-# ============================================================
 FROM ghcr.io/blueapple168/${BASE_IMAGE_TAG} AS builder
 
-# 维护者信息
 LABEL maintainer="blueapple" \
       version="1.0" \
       description="Redis 8.8.2 with RedisJSON on UOS 1070a" \
       org.opencontainers.image.base.name="registry.uniontech.com/uos-server-base/uos-server-20-1070a:latest" \
-      org.opencontainers.image.description="Redis packaged on UOS 10700a" \
       org.opencontainers.image.title="Redis" \
       org.opencontainers.image.version="${REDIS_VERSION}"
 
-# ============================================================
-# 环境变量
-# ============================================================
 ENV REDIS_VERSION=${REDIS_VERSION} \
     TZ=Asia/Shanghai \
     APP_USER=redis \
     REDIS_DOWNLOAD_URL=https://github.com/redis/redis/archive/refs/tags/${REDIS_VERSION}.tar.gz \
     REDIS_DOWNLOAD_SHA=b58d3b51a93a05221fe0a835e915f9e472bb53db100af190e4259c33638d9a52 \
-    PATH=/root/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/sbin:/bin
+    PATH=/root/.cargo/bin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin
 
-# ============================================================
-# 构建阶段：编译 Redis + RedisJSON
-# ============================================================
 RUN set -eux && \
-    # 修复 UOS yum repo
     sed -i 's/\$StateMode/ufu/g' /etc/yum.repos.d/UnionTechOS.repo && \
-    # 时区配置
     ln -sf /usr/share/zoneinfo/${TZ} /etc/localtime && \
     echo "${TZ}" > /etc/timezone && \
-    # 更新 yum 缓存
     yum makecache && \
-    # ==========================================
-    # 安装编译依赖（基础工具链）
-    # ==========================================
-    yum install -y \
-        --setopt=install_weak_deps=false \
-        --nogpgcheck \
-        --nodocs \
-        tar \
-        gzip \
-        curl \
-        ca-certificates \
-        git \
-        procps-ng \
-        wget \
-        which \
-        make \
-        gcc \
-        gcc-c++ \
-        glibc-devel \
-        glibc-headers \
-        kernel-headers \
-        openssl-devel \
-        libcap \
-        && \
-    # ==========================================
-    # 架构检测（适配 x86_64/arm64）
-    # ==========================================
+    yum install -y --setopt=install_weak_deps=false --nogpgcheck --nodocs \
+        tar gzip curl ca-certificates git procps-ng wget which \
+        make gcc gcc-c++ glibc-devel glibc-headers kernel-headers openssl-devel libcap && \
     ARCH=$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/') && \
     echo "Building for architecture: $ARCH" && \
-    # ==========================================
-    # 安装 Rust 工具链（用于 RedisJSON 模块）
-    # ==========================================
     if [ "$ARCH" = "amd64" ] || [ "$ARCH" = "arm64" ]; then \
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal; \
-        # 安装 Rust 依赖包
-        yum install -y \
-            --setopt=install_weak_deps=false \
-            --nogpgcheck \
-            --nodocs \
-            autoconf \
-            automake \
-            cmake \
-            libffi-devel \
-            libtool \
-            ncurses-devel \
-            python3 \
-            python3-devel \
-            clang \
-            lld \
-            clang-devel \
-            llvm-devel \
-            rsync \
-            unzip \
-            xz \
-            && \
+        yum install -y --setopt=install_weak_deps=false --nogpgcheck --nodocs \
+            autoconf automake cmake libffi-devel libtool ncurses-devel \
+            python3 python3-devel clang lld clang-devel llvm-devel rsync unzip xz && \
         pip3 install --upgrade pip setuptools wheel --quiet; \
     fi && \
-    # ==========================================
-    # 下载并编译 Redis
-    # ==========================================
     mkdir -p /usr/src/redis && \
     cd /usr/src/redis && \
     wget -q -O redis.tar.gz "$REDIS_DOWNLOAD_URL" && \
     echo "$REDIS_DOWNLOAD_SHA *redis.tar.gz" | sha256sum -c - && \
     tar -xzf redis.tar.gz --strip-components=1 && \
     rm redis.tar.gz && \
-    # ==========================================
-    # 禁用 protected-mode（Docker 场景无需）
-    # ==========================================
     sed -ri 's!^( *createBoolConfig\("protected-mode",.*, *)1( *,.*\),)$!\10\2!' /usr/src/redis/src/config.c || true && \
-    # ==========================================
-    # jemalloc 配置优化
-    # ==========================================
     gnuArch=$(gcc -dumpmachine | awk -F- '{ print $1 }') && \
     extraJemallocConfigureFlags="--build=$gnuArch" && \
-    dpkgArch=$(uname -m) && \
-    case "${dpkgArch}" in \
+    case "$(uname -m)" in \
         amd64 | i386 | x32) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=12" ;; \
         *) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=16" ;; \
     esac && \
     extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-hugepage=21" && \
     sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' /usr/src/redis/deps/Makefile || true && \
-    # ==========================================
-    # RedisJSON 模块编译
-    # ==========================================
     export BUILD_TLS=yes && \
     if [ "$ARCH" = "amd64" ] || [ "$ARCH" = "arm64" ]; then \
-        export LTO=1; \
-        export RUST_DYN_CRT=1; \
+        export LTO=1 RUST_DYN_CRT=1; \
         cd /usr/src/redis/modules/redisjson && \
-        make get_source; \
-        sed -i 's/^RUST_FLAGS=$/RUST_FLAGS += -C target-feature=-crt-static/' /usr/src/redis/modules/redisjson/src/Makefile || true; \
+        make get_source && \
+        sed -i 's/^RUST_FLAGS=$/RUST_FLAGS += -C target-feature=-crt-static/' /usr/src/redis/modules/redisjson/src/Makefile 2>/dev/null || true; \
         make -j "$(nproc)"; \
-        # 复制模块到临时目录
-        mkdir -p /tmp/redis-modules && \
-        cp src/target/release/*.so /tmp/redis-modules/ 2>/dev/null || \
-        cp src/target/release/librejson.so /tmp/redis-modules/ 2>/dev/null || true; \
     fi && \
-    # ==========================================
-    # 编译 Redis 主程序
-    # ==========================================
     cd /usr/src/redis && \
     make -j "$(nproc)" all && \
     make install && \
     # ==========================================
-    # 清理源码（保留 deps 用于模块编译后的复制）
+    # 重要：distclean 前先备份需要复制的文件
     # ==========================================
+    mkdir -p /tmp/redis-backup && \
+    cp -a /usr/local/bin/redis-* /tmp/redis-backup/ && \
+    cp -a /usr/local/share/redis /tmp/redis-backup/ 2>/dev/null || mkdir -p /tmp/redis-backup/redis; \
+    cp -a /usr/local/etc/redis /tmp/redis-backup/ 2>/dev/null || mkdir -p /tmp/redis-backup/redis; \
+    cp -a /usr/local/lib/redis /tmp/redis-backup/ 2>/dev/null || mkdir -p /tmp/redis-backup/redis; \
+    if [ "$ARCH" = "amd64" ] || [ "$ARCH" = "arm64" ]; then \
+        mkdir -p /tmp/redis-backup/modules && \
+        cp /usr/src/redis/modules/redisjson/src/target/release/*.so /tmp/redis-backup/modules/ 2>/dev/null || true; \
+    fi && \
+    cp -a /etc/ssl /tmp/redis-backup/ 2>/dev/null || true && \
     make distclean || true && \
-    # ==========================================
-    # 创建 redis 用户和目录
-    # ==========================================
     groupadd -r "${APP_USER}" -g 1000 || true && \
     useradd -r -u 1000 -g "${APP_USER}" -d "/data" -s /bin/bash "${APP_USER}" || true && \
-    mkdir -p /data && \
-    chown redis:redis /data && \
-    # ==========================================
-    # 清理缓存和临时文件
-    # ==========================================
+    mkdir -p /data && chown redis:redis /data && \
     yum clean all && \
-    rm -rf \
-        /var/cache/yum/* \
-        /var/tmp/* \
-        /tmp/* \
-        /root/.cargo/registry/* \
-        /root/.cargo/git/* \
-        ~/.cache/* \
-        ~/.gitconfig \
-        /usr/src/redis
+    rm -rf /var/cache/yum/* /var/tmp/* /tmp/* /root/.cargo/registry/* /root/.cargo/git/* ~/.cache ~/.gitconfig /usr/src/redis /usr/local/bin/* /usr/local/lib/* /usr/local/share/redis /usr/local/etc/redis
 
-# ============================================================
-# 第二阶段：运行时镜像
-# ============================================================
 FROM ghcr.io/blueapple168/${BASE_IMAGE_TAG}
 
-LABEL maintainer="blueapple" \
-      version="1.0" \
-      description="Redis 8.8.2 with RedisJSON on UOS 1070a"
+LABEL maintainer="blueapple" version="1.0" description="Redis 8.8.2 with RedisJSON on UOS 1070a"
 
-ENV REDIS_VERSION=${REDIS_VERSION} \
-    TZ=Asia/Shanghai \
-    APP_USER=redis \
-    PATH=/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin
+ENV TZ=Asia/Shanghai APP_USER=redis PATH=/usr/local/bin:/usr/bin:/usr/sbin:/sbin
 
-# 复制编译产物
-COPY --from=builder /usr/local/bin/redis-server /usr/local/bin/redis-server
-COPY --from=builder /usr/local/bin/redis-cli /usr/local/bin/redis-cli
-COPY --from=builder /usr/local/bin/redis-benchmark /usr/local/bin/redis-benchmark
-COPY --from=builder /usr/local/bin/redis-check-aof /usr/local/bin/redis-check-aof
-COPY --from=builder /usr/local/bin/redis-check-rdb /usr/local/bin/redis-check-rdb
-COPY --from=builder /usr/local/bin/redis-sentinel /usr/local/bin/redis-sentinel
-COPY --from=builder /usr/local/share/redis/ /usr/local/share/redis/
-COPY --from=builder /usr/local/etc/redis/ /usr/local/etc/redis/
-COPY --from=builder /usr/local/lib/ /usr/local/lib/
-COPY --from=builder /tmp/redis-modules/ /usr/local/lib/redis/modules/
-COPY --from=builder /etc/ssl/ /etc/ssl/
-
-# 复制用户和目录
+COPY --from=builder /tmp/redis-backup/ /usr/local/
 COPY --from=builder /data /data
 
-# 设置权限
 RUN mkdir -p /usr/local/bin /data && \
     chown -R redis:redis /data && \
     chmod +x /usr/local/bin/redis-* && \
     yum clean all 2>/dev/null || true
 
 WORKDIR /data
-
 EXPOSE 6379
-
 COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["redis-server"]
