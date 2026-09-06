@@ -8,6 +8,7 @@ on:
       - '8.8-uos/Dockerfile'
       - '8.8-uos/docker-entrypoint.sh'
       - '.github/workflows/docker-publish.yml'
+  push:
     tags:
       - 'v*'
   pull_request:
@@ -25,6 +26,11 @@ on:
         default: 'true'
         type: boolean
 
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/redis-uos
@@ -39,7 +45,6 @@ jobs:
       digest: ${{ steps.build.outputs.digest }}
       short_sha: ${{ steps.vars.outputs.SHORT_SHA }}
       date_tag: ${{ steps.vars.outputs.DATE_TAG }}
-
     steps:
       - name: Set variables
         id: vars
@@ -61,7 +66,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
+          username: ${{ shturl.cc/Lj }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
@@ -96,10 +101,6 @@ jobs:
   security-scan:
     runs-on: ubuntu-latest
     needs: build
-    permissions:
-      security-events: write
-      contents: read
-
     steps:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
@@ -110,7 +111,6 @@ jobs:
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
           ignore-unfixed: true
-
       - name: Upload Trivy scan results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
@@ -123,12 +123,10 @@ jobs:
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Pull image
         run: |
           docker pull ${{ needs.build.outputs.image }}:8.8-uos || \
           docker pull ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
-
       - name: Run health check
         run: |
           docker run --rm -d --name redis-test \
@@ -137,7 +135,6 @@ jobs:
           sleep 5
           docker exec redis-test redis-cli ping
           docker stop redis-test || true
-
       - name: Test RedisJSON module
         run: |
           docker run --rm -d --name redis-json-test \
@@ -151,25 +148,18 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, test]
     if: startsWith(github.ref, 'refs/tags/v')
-
     steps:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           body: |
             ## Redis ${{ env.REDIS_VERSION }} for UOS 1070a
-
             ### 镜像信息
             - **Registry**: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
             - **Tag**: ${{ github.ref_name }}
             - **Digest**: ${{ needs.build.outputs.digest }}
-            - **Platforms**: linux/amd64, linux/arm64
-
+            - **Platforms**: linux/amd64
             ### 快速使用
             ```bash
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
             docker run -d --name redis -p 6379:6379 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
-            ```
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
