@@ -1,10 +1,6 @@
 name: Build and Push Redis Image
 
-# ============================================================
-# 触发条件
-# ============================================================
 on:
-  # 监听 8.8-uos 目录下的文件变更，自动编译发布
   push:
     branches:
       - 8.8-uos
@@ -27,23 +23,13 @@ on:
         default: 'true'
         type: boolean
 
-# ============================================================
-# 环境变量
-# ============================================================
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/redis-uos
   REDIS_VERSION: 8.8.2
   YQ_VERSION: v4.53.6
-  BASE_IMAGE: ghcr.io/blueapple168/uos-server-20-1070a:latest
 
-# ============================================================
-# 任务定义
-# ============================================================
 jobs:
-  # -------------------------------------------
-  # 构建任务
-  # -------------------------------------------
   build:
     runs-on: ubuntu-latest
     outputs:
@@ -53,26 +39,21 @@ jobs:
       date_tag: ${{ steps.vars.outputs.DATE_TAG }}
 
     steps:
-      # -------- 变量定义 --------
       - name: Set variables
         id: vars
         run: |
           echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
           echo "DATE_TAG=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
 
-      # -------- 检出代码 --------
       - name: Checkout
         uses: actions/checkout@v4
 
-      # -------- 获取 QEMU 支持 --------
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # -------- 配置 Docker Buildx --------
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # -------- 登录到 GHCR --------
       - name: Login to GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -81,7 +62,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # -------- 构建镜像 --------
       - name: Build and push
         id: build
         uses: docker/build-push-action@v6
@@ -89,15 +69,10 @@ jobs:
           context: 8.8-uos
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
-            # 主标签
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
-            # 带版本号
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos-${{ env.REDIS_VERSION }}
-            # SHA 标签
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.vars.outputs.SHORT_SHA }}
-            # 日期标签
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.DATE_TAG }}
-            # Tag 推送时使用 tag 名
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
           build-args: |
             REDIS_VERSION=${{ env.REDIS_VERSION }}
@@ -109,23 +84,15 @@ jobs:
           cache-from: type=gha,scope=${{ github.ref }}
           cache-to: type=gha,mode=max,scope=${{ github.ref }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true
-          ghcr-retention-days: 30
 
-      # -------- 打印构建摘要 --------
       - name: Build summary
         run: |
           echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "- Digest: ${{ steps.build.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Tags:" >> $GITHUB_STEP_SUMMARY
-          echo "  - 8.8-uos" >> $GITHUB_STEP_SUMMARY
-          echo "  - 8.8-uos-${{ env.REDIS_VERSION }}" >> $GITHUB_STEP_SUMMARY
-          echo "  - sha-${{ steps.vars.outputs.SHORT_SHA }}" >> $GITHUB_STEP_SUMMARY
-          echo "  - ${{ steps.vars.outputs.DATE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- SHA: ${{ steps.vars.outputs.SHORT_SHA }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Date: ${{ steps.vars.outputs.DATE_TAG }}" >> $GITHUB_STEP_SUMMARY
 
-  # -------------------------------------------
-  # 安全扫描任务
-  # -------------------------------------------
   security-scan:
     runs-on: ubuntu-latest
     needs: build
@@ -144,15 +111,12 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
 
-      - name: Upload Trivy scan results to GitHub Security tab
+      - name: Upload Trivy scan results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
 
-  # -------------------------------------------
-  # 多平台兼容性测试
-  # -------------------------------------------
   test:
     runs-on: ubuntu-latest
     needs: build
@@ -160,7 +124,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Pull image for testing
+      - name: Pull image
         run: |
           docker pull ${{ needs.build.outputs.image }}:8.8-uos || \
           docker pull ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
@@ -179,13 +143,10 @@ jobs:
           docker run --rm -d --name redis-json-test \
             ${{ needs.build.outputs.image }}:8.8-uos
           sleep 5
-          docker exec redis-json-test redis-cli JSON.SET test '{"hello":"world"}' || echo "RedisJSON module not loaded (expected for base image)"
+          docker exec redis-json-test redis-cli JSON.SET test '{"hello":"world"}' || echo "RedisJSON not available"
           docker exec redis-json-test redis-cli PING
           docker stop redis-json-test || true
 
-  # -------------------------------------------
-  # 发布通知（仅推送 tag 时触发）
-  # -------------------------------------------
   release:
     runs-on: ubuntu-latest
     needs: [build, test]
@@ -206,20 +167,8 @@ jobs:
 
             ### 快速使用
             ```bash
-            # 拉取镜像
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
-
-            # 运行容器
-            docker run -d --name redis \\
-              -p 6379:6379 \\
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
-
-            # 使用自定义配置
-            docker run -d --name redis \\
-              -v /path/to/redis.conf:/usr/local/etc/redis/redis.conf \\
-              -p 6379:6379 \\
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos \\
-              redis-server /usr/local/etc/redis/redis.conf
+            docker run -d --name redis -p 6379:6379 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
             ```
           generate_release_notes: true
         env:
