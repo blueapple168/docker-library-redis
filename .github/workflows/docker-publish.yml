@@ -5,8 +5,8 @@ on:
     branches:
       - 8.8-uos
     paths:
-      - 'Dockerfile'
-      - 'docker-entrypoint.sh'
+      - '8.8-uos/Dockerfile'
+      - '8.8-uos/docker-entrypoint.sh'
       - '.github/workflows/docker-publish.yml'
     tags:
       - 'v*'
@@ -14,8 +14,8 @@ on:
     branches:
       - 8.8-uos
     paths:
-      - 'Dockerfile'
-      - 'docker-entrypoint.sh'
+      - '8.8-uos/Dockerfile'
+      - '8.8-uos/docker-entrypoint.sh'
       - '.github/workflows/docker-publish.yml'
   workflow_dispatch:
     inputs:
@@ -68,7 +68,7 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: 8.8-uos
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
