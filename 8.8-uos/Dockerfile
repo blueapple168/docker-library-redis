@@ -43,6 +43,7 @@ ENV REDIS_VERSION=${REDIS_VERSION} \
 RUN set -eux && \
     # 修复 UOS yum repo
     sed -i 's/\$StateMode/ufu/g' /etc/yum.repos.d/UnionTechOS.repo && \
+    yum -y update && \
     # 时区配置
     ln -sf /usr/share/zoneinfo/${TZ} /etc/localtime && \
     echo "${TZ}" > /etc/timezone && \
@@ -55,7 +56,6 @@ RUN set -eux && \
         --setopt=install_weak_deps=false \
         --nogpgcheck \
         --nodocs \
-        update \
         tar \
         gzip \
         curl \
@@ -88,7 +88,6 @@ RUN set -eux && \
             --setopt=install_weak_deps=false \
             --nogpgcheck \
             --nodocs \
-            update \
             autoconf \
             automake \
             cmake \
