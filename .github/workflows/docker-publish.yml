@@ -1,5 +1,4 @@
 name: Build and Push Redis Image
-
 on:
   push:
     branches:
@@ -61,7 +60,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push_to_registry)
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -73,7 +72,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: 8.8-uos
-          push: ${{ github.event_name != 'pull_request' }}
+          # 支持 workflow_dispatch 控制推送；PR不推送
+          push: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push_to_registry) }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos-${{ env.REDIS_VERSION }}
@@ -82,12 +82,13 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
           build-args: |
             REDIS_VERSION=${{ env.REDIS_VERSION }}
-            YQ_VERSION=${{ env.YQ_VERSION }}
             BASE_IMAGE_TAG=uos-server-20-1070a:latest
           platforms: |
             linux/amd64
+            # linux/arm64 如需aarch64打开注释
           no-cache: true
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true
+          # 移除 push-by-digest=true，否则tags不会写入镜像
+          # outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true
 
       - name: Build summary
         run: |
@@ -104,12 +105,14 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ needs.build.outputs.image }}:8.8-uos
+          # 使用digest，不依赖tag
+          image-ref: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
           ignore-unfixed: true
+
       - name: Upload Trivy scan results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
@@ -122,22 +125,24 @@ jobs:
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Pull image
+
+      - name: Pull image by digest
         run: |
-          docker pull ${{ needs.build.outputs.image }}:8.8-uos || \
           docker pull ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+
       - name: Run health check
         run: |
           docker run --rm -d --name redis-test \
             -e TZ=Asia/Shanghai \
-            ${{ needs.build.outputs.image }}:8.8-uos
+            ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
           sleep 5
           docker exec redis-test redis-cli ping
           docker stop redis-test || true
+
       - name: Test RedisJSON module
         run: |
           docker run --rm -d --name redis-json-test \
-            ${{ needs.build.outputs.image }}:8.8-uos
+            ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
           sleep 5
           docker exec redis-json-test redis-cli JSON.SET test '{"hello":"world"}' || echo "RedisJSON not available"
           docker exec redis-json-test redis-cli PING
@@ -161,4 +166,3 @@ jobs:
             ### 快速使用
             ```bash
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
-            docker run -d --name redis -p 6379:6379 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
