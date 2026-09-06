@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# Redis Docker EntryPoint - UOS Server 版本
+# Redis Docker EntryPoint - UOS Server
 # 适配统信 UOS 1070a 基础镜像
 # ============================================================
 set -e
