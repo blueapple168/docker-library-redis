@@ -85,7 +85,6 @@ jobs:
             BASE_IMAGE_TAG=uos-server-20-1070a:latest
           platforms: |
             linux/amd64
-            # linux/arm64 如需aarch64打开注释
           no-cache: true
           # 移除 push-by-digest=true，否则tags不会写入镜像
           # outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true
