@@ -113,6 +113,7 @@ RUN set -eux; \
     mkdir -p /data /usr/local/lib/redis/modules; \
     chown redis:redis /data; \
     sed -i 's/\$StateMode/ufu/g' /etc/yum.repos.d/UnionTechOS.repo; \
+    sed -i 's/Version: 39\.2\.0/Version: 2026\.10\.08/g' /usr/lib/python3.6/site-packages/setuptools-39.2.0.dist-info/METADATA 2>/dev/null || true; \
     yum makecache; \
     yum install -y --setopt=install_weak_deps=false --nogpgcheck --nodocs util-linux curl findutils; \
     yum clean all; rm -rf /var/cache/yum/*
@@ -124,7 +125,6 @@ COPY --from=builder /dist/modules/* /usr/local/lib/redis/modules/
 RUN set -eux; \
     chmod +x /usr/local/bin/redis-*; \
     redis-cli --version; redis-server --version
-
 WORKDIR /data
 
 # 使用官方原版entrypoint脚本
