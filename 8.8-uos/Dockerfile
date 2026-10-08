@@ -11,8 +11,10 @@ FROM ghcr.io/blueapple168/${BASE_IMAGE_TAG} AS builder
 
 LABEL maintainer="blueapple" \
       version="1.0" \
-      description="Redis 8.8.3 with RedisJSON on UOS 1070a" \
-      org.opencontainers.image.base.name="registry.uniontech.com/uos-server-base/uos-server-20-1070a:latest"
+      description="Redis 8 with RedisJSON on UOS 1070a" \
+      org.opencontainers.image.base.name="registry.uniontech.com/uos-server-base/uos-server-20-1070a:latest" \
+      org.opencontainers.image.title="Redis" \
+      org.opencontainers.image.version="${REDIS_VERSION}"
 
 ARG REDIS_VERSION
 ENV REDIS_VERSION=${REDIS_VERSION}
