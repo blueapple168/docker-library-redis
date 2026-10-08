@@ -1,4 +1,5 @@
 name: Build and Push Redis Image
+
 on:
   push:
     branches:
@@ -16,6 +17,9 @@ on:
       - '8.8-uos/Dockerfile'
       - '8.8-uos/docker-entrypoint.sh'
       - '.github/workflows/docker-publish.yml'
+  # 每周一上午 06:00 (UTC) 自动检测 Redis 8.8 分支是否有新 stable 版本
+  schedule:
+    - cron: '0 6 * * 1'
   workflow_dispatch:
     inputs:
       push_to_registry:
@@ -23,6 +27,11 @@ on:
         required: false
         default: 'true'
         type: boolean
+      redis_version:
+        description: '指定 Redis 8.8.x 版本号；留空则自动获取该分支的最新 stable tag'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -32,7 +41,8 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/redis-uos
-  REDIS_VERSION: 8.8.2
+  MAJOR_BRANCH: '8.8'
+  BASE_IMAGE_TAG: uos-server-20-1070a:latest
 
 jobs:
   build:
@@ -42,6 +52,7 @@ jobs:
       digest: ${{ steps.build.outputs.digest }}
       short_sha: ${{ steps.vars.outputs.SHORT_SHA }}
       date_tag: ${{ steps.vars.outputs.DATE_TAG }}
+      version: ${{ steps.resolve.outputs.version }}
     steps:
       - name: Set variables
         id: vars
@@ -51,6 +62,52 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # 自动检测 8.8.x 最新 stable 版本号
+      # SHA 校验说明：
+      #   Redis 8.8.x 各 stable release 在 https://github.com/redis/redis/releases
+      #   的 assets 数组均为空，无法从该页面自动获取 SHA256 digest，
+      #   因此本 workflow 不再做 SHA 强制校验，Dockerfile 中相关
+      #   REDIS_DOWNLOAD_SHA 行也已注释掉。后续如 Redis 在 release 页面
+      #   上传 manual assets，可在本步加一个 sha256sum 校验逻辑并通过
+      #   build-arg 重新启用 Dockerfile 中的校验。
+      # ------------------------------------------------------------------
+      - name: Resolve latest Redis 8.8.x stable version
+        id: resolve
+        env:
+          INPUT_REDIS_VERSION: ${{ inputs.redis_version || '' }}
+          MAJOR_BRANCH: ${{ env.MAJOR_BRANCH }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${INPUT_REDIS_VERSION}" ]; then
+            VERSION="${INPUT_REDIS_VERSION}"
+            echo "Using user-provided version: ${VERSION}"
+          else
+            echo "Querying GitHub for the latest ${MAJOR_BRANCH}.x stable tag..."
+            # GitHub tags API：筛 形如 "8.8.N" 的最大 stable tag（排除 rc/alpha/beta/pre 等）
+            VERSION="$(
+              curl -fsSL "https://api.github.com/repos/redis/redis/tags?per_page=100" \
+                | jq -r --arg branch "${MAJOR_BRANCH}" '
+                    [ .[]
+                      | select(.name | test("^" + $branch + "\\.[0-9]+$"))
+                      | .name ]
+                    | sort -V
+                    | last // empty
+                '
+            )"
+            if [ -z "${VERSION}" ]; then
+              echo "::error::未在 redis/redis 仓库中找到 ${MAJOR_BRANCH}.x 分支的 stable tag"
+              exit 1
+            fi
+            echo "Resolved latest stable tag: ${VERSION}"
+          fi
+
+          {
+            echo "version=${VERSION}"
+            echo "tarball_url=https://github.com/redis/redis/archive/refs/tags/${VERSION}.tar.gz"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -74,23 +131,34 @@ jobs:
           push: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push_to_registry) }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos-${{ env.REDIS_VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos-${{ steps.resolve.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.vars.outputs.SHORT_SHA }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.DATE_TAG }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
           build-args: |
-            REDIS_VERSION=${{ env.REDIS_VERSION }}
-            BASE_IMAGE_TAG=uos-server-20-1070a:latest
+            REDIS_VERSION=${{ steps.resolve.outputs.version }}
+            BASE_IMAGE_TAG=${{ env.BASE_IMAGE_TAG }}
           platforms: linux/amd64
           no-cache: true
 
       - name: Build summary
+        if: always()
         run: |
           echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Digest: ${{ steps.build.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
-          echo "- SHA: ${{ steps.vars.outputs.SHORT_SHA }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Date: ${{ steps.vars.outputs.DATE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "- Redis version: \`${{ steps.resolve.outputs.version }}\`"
+            echo "- Tarball URL:   ${{ steps.resolve.outputs.tarball_url }}"
+            echo "- Image:         ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+            echo "- Digest:        ${{ steps.build.outputs.digest }}"
+            echo "- Commit SHA:    \`${{ steps.vars.outputs.SHORT_SHA }}\`"
+            echo "- Date tag:      ${{ steps.vars.outputs.DATE_TAG }}"
+            echo "- Base image:    \`ghcr.io/blueapple168/${{ env.BASE_IMAGE_TAG }}\`"
+            echo ""
+            echo "_注：Redis 8.8.x release 在 https://github.com/redis/redis/releases 无 uploaded assets，未做下载 SHA256 校验。_"
+          } >> $GITHUB_STEP_SUMMARY
+        env:
+          ACTIONS_STEP_DEBUG: true
 
   security-scan:
     runs-on: ubuntu-latest
@@ -129,12 +197,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            ## Redis ${{ env.REDIS_VERSION }} for UOS 1070a
+            ## Redis ${{ needs.build.outputs.version }} (UOS 1070a, 8.8 分支)
             ### 镜像信息
             - **Registry**: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
             - **Tag**: ${{ github.ref_name }}
             - **Digest**: ${{ needs.build.outputs.digest }}
             - **Platforms**: linux/amd64
+            - **Base image**: `ghcr.io/blueapple168/${{ env.BASE_IMAGE_TAG }}`
             ### 快速使用
             ```bash
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos-${{ needs.build.outputs.version }}
+            ```
