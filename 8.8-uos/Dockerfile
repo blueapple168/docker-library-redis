@@ -14,21 +14,26 @@
 # 启动时通过 GitHub tags API 自动检测 8.8.x 最新 stable，并通过 build-arg 替换
 # REDIS_VERSION，无需改本 Dockerfile。
 # ==============================================
+
 ARG REDIS_VERSION=8.8.3
 ARG BASE_IMAGE_TAG=uos-server-20-1070a:latest
-# ARG REDIS_DOWNLOAD_SHA=811194d6885bd30c6672656536adadbd2d419039
+# ARG REDIS_DOWNLOAD_SHA=811194d6885bd30c66726565365b64a8edddac60eb027a2436adadbd2d419039
 
 FROM ghcr.io/blueapple168/${BASE_IMAGE_TAG} AS builder
-ARG REDIS_VERSION
+
 LABEL maintainer="blueapple" \
       version="1.0" \
       description="Redis 8 with RedisJSON on UOS 1070a" \
       org.opencontainers.image.base.name="registry.uniontech.com/uos-server-base/uos-server-20-1070a:latest" \
       org.opencontainers.image.title="Redis" \
       org.opencontainers.image.version="${REDIS_VERSION}"
+
+ARG REDIS_VERSION
+# ARG REDIS_DOWNLOAD_SHA
 ENV REDIS_VERSION=${REDIS_VERSION}
 ENV REDIS_DOWNLOAD_URL=https://github.com/redis/redis/archive/refs/tags/${REDIS_VERSION}.tar.gz
 # ENV REDIS_DOWNLOAD_SHA=${REDIS_DOWNLOAD_SHA}
+
 ENV TZ=Asia/Shanghai
 
 RUN set -eux; \
@@ -73,7 +78,7 @@ RUN set -eux; \
     tar -xzf /tmp/redis.tar.gz -C /usr/src/redis --strip-components=1; \
     rm -f /tmp/redis.tar.gz; \
     \
-    : "=== 关闭 protected‑mode，与官方原版逻辑完全一致 ===" ; \
+    : "=== 关闭 protected-mode，与官方原版逻辑完全一致 ===" ; \
     grep -E '^ *createBoolConfig\("protected-mode",.*, *1 *,.*\),' /usr/src/redis/src/config.c; \
     sed -ri 's!^( *createBoolConfig\("protected-mode",.*, *)1( *,.*\),)$!\10\2!' /usr/src/redis/src/config.c; \
     grep -E '^ *createBoolConfig\("protected-mode",.*, *0 *,.*\),' /usr/src/redis/src/config.c; \
@@ -116,13 +121,16 @@ RUN set -eux; \
 
 # -------------------------- 最终运行镜像阶段 --------------------------
 FROM ghcr.io/blueapple168/${BASE_IMAGE_TAG}
+
 ARG REDIS_VERSION
+# ARG REDIS_DOWNLOAD_SHA
 LABEL maintainer="blueapple" \
       version="1.0" \
       description="Redis 8 with RedisJSON on UOS 1070a" \
       org.opencontainers.image.base.name="registry.uniontech.com/uos-server-base/uos-server-20-1070a:latest" \
       org.opencontainers.image.title="Redis" \
       org.opencontainers.image.version="${REDIS_VERSION}"
+
 ENV TZ=Asia/Shanghai
 
 # 用户创建：优先尝试gid=1000 uid=999；UOS镜像冲突则自动分配id；id redis强校验，禁止掩盖创建失败
@@ -157,12 +165,13 @@ COPY --from=builder /dist/modules/* /usr/local/lib/redis/modules/
 RUN set -eux; \
     chmod +x /usr/local/bin/redis-*; \
     redis-cli --version; redis-server --version
-
 WORKDIR /data
+
 # 使用官方原版entrypoint脚本
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 6379
+
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["redis-server"]
