@@ -1,23 +1,23 @@
 # ==============================================
-# Redis 8.8.2 (with RedisJSON) UOS Server 20 1070a
+# Redis 8 (with RedisJSON) UOS Server 20 1070a
 # 基于官方alpine Dockerfile逻辑改写，多阶段构建
 # entrypoint 使用官方原版脚本，自动扫描加载modules目录下所有so模块
 # ==============================================
 
-ARG REDIS_VERSION=8.8.2
+ARG REDIS_VERSION=8.8.3
 ARG BASE_IMAGE_TAG=uos-server-20-1070a:latest
 
 FROM ghcr.io/blueapple168/${BASE_IMAGE_TAG} AS builder
 
 LABEL maintainer="blueapple" \
       version="1.0" \
-      description="Redis 8.8.2 with RedisJSON on UOS 1070a" \
+      description="Redis 8.8.3 with RedisJSON on UOS 1070a" \
       org.opencontainers.image.base.name="registry.uniontech.com/uos-server-base/uos-server-20-1070a:latest"
 
 ARG REDIS_VERSION
 ENV REDIS_VERSION=${REDIS_VERSION}
 ENV REDIS_DOWNLOAD_URL=https://github.com/redis/redis/archive/refs/tags/${REDIS_VERSION}.tar.gz
-ENV REDIS_DOWNLOAD_SHA=b58d3b51a93a05221fe0a835e915f9e472bb53db100af190e4259c33638d9a52
+ENV REDIS_DOWNLOAD_SHA=811194d6885bd30c66726565365b64a8edddac60eb027a2436adadbd2d419039
 
 ENV TZ=Asia/Shanghai
 
@@ -46,7 +46,7 @@ RUN set -eux; \
     \
     mkdir -p /usr/src/redis; \
     wget -q -O /tmp/redis.tar.gz "$REDIS_DOWNLOAD_URL"; \
-    echo "$REDIS_DOWNLOAD_SHA */tmp/redis.tar.gz" | sha256sum -c -; \
+    echo "$ */tmp/redis.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/redis.tar.gz -C /usr/src/redis --strip-components=1; \
     rm -f /tmp/redis.tar.gz; \
     \
@@ -97,7 +97,7 @@ FROM ghcr.io/blueapple168/${BASE_IMAGE_TAG}
 ARG REDIS_VERSION
 LABEL maintainer="blueapple" \
       version="1.0" \
-      description="Redis 8.8.2 with RedisJSON on UOS 1070a" \
+      description="Redis 8 with RedisJSON on UOS 1070a" \
       org.opencontainers.image.base.name="registry.uniontech.com/uos-server-base/uos-server-20-1070a:latest" \
       org.opencontainers.image.title="Redis" \
       org.opencontainers.image.version="${REDIS_VERSION}"
