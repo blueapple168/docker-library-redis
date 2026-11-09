@@ -1,3 +1,9 @@
 /*/**/Dockerfile            linguist-generated
 /*/**/docker-entrypoint.sh  linguist-generated
 /Dockerfile*.template       linguist-language=Dockerfile
+
+# uos / kylin 变体为手工维护（非模板生成），需要在 diff 中正常展示
+/*/*/uos/Dockerfile            -linguist-generated
+/*/*/uos/docker-entrypoint.sh  -linguist-generated
+/*/*/kylin/Dockerfile          -linguist-generated
+/*/*/kylin/docker-entrypoint.sh -linguist-generated

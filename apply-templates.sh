@@ -28,7 +28,9 @@ generated_warning() {
 }
 
 for version; do
-	rm -rf "$version"
+	# 只清理由模板生成的 debian/alpine；手工维护的 uos/kylin 变体必须保留，
+	# 否则跑一次 ./update.sh 就会把信创变体目录删掉
+	rm -rf "$version/debian" "$version/alpine"
 
 	for variant in debian alpine; do
 		export version variant

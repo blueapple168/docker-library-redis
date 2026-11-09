@@ -1,0 +1,20 @@
+{
+  "_comment": "Redis 官方版本生命周期表（机器可读副本）。构建策略以此为准：EOL 已过期的版本线不再跟踪构建。",
+  "source": "https://redis.io/docs/latest/operate/oss_and_stack/install/version-mgmt/",
+  "retrieved": "2026-11-09",
+  "_policy": {
+    "standard": "标准版本：大版本系列的首个版本(如 8.0)与中间小版本(如 8.4/8.6)，在下一个 minor 发布后 6 个月内提供安全与关键修复",
+    "extended": "扩展版本(LTS)：系列里第二个小版本(如 8.2)与最后一个小版本，自发布起提供 5 年安全与关键修复"
+  },
+  "versions": {
+    "8.10": { "type": "standard", "eol": null },
+    "8.8":  { "type": "standard", "eol": null },
+    "8.6":  { "type": "standard", "eol": null },
+    "8.4":  { "type": "standard", "eol": null },
+    "8.2":  { "type": "extended", "eol": "2030-09-01" },
+    "8.0":  { "type": "standard", "eol": "2026-12-01" },
+    "7.4":  { "type": "extended", "eol": "2029-12-01" },
+    "7.2":  { "type": "extended", "eol": "2029-12-01" },
+    "6.2":  { "type": "extended", "eol": "2027-04-01" }
+  }
+}

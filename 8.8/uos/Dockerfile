@@ -115,6 +115,8 @@ RUN set -eux; \
     if [ "$BUILD_WITH_MODULES" = "yes" ] && [ -f /usr/src/redis/modules/redisjson/src/target/release/rejson.so ]; then \
         cp /usr/src/redis/modules/redisjson/src/target/release/rejson.so /dist/modules/rejson.so; \
     fi; \
+    : "=== 占位文件：模块为空时 COPY /dist/modules/* 仍然成立 ===" ; \
+    [ -n "$(ls -A /dist/modules)" ] || touch /dist/modules/.placeholder; \
     \
     make -C /usr/src/redis distclean; \
     rm -rf /usr/src/redis /root/.cargo /root/.cache

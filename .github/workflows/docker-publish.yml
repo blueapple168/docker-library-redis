@@ -1,37 +1,65 @@
-name: Build and Push Redis Image
+name: Redis 镜像构建（UOS / Kylin V11）
+
+# 目录约定：<major.minor>/<variant>/Dockerfile，variant ∈ {uos, kylin}
+#   uos   -> 基础镜像 UOS Server 20 1070a
+#   kylin -> 基础镜像 Kylin Server V11 Minimal
+#
+# 三个触发面：
+#   push / PR       只重建仓库里已有的版本线，不自动新增目录（避免一次提交炸出 6 个镜像）
+#   schedule        每周检查上游 GA 版本：自动升 patch、自动新增版本线、刷新 README，然后构建
+#   workflow_dispatch 手动指定版本线 / 变体 / 强制版本号
+#
+# 版本范围严格跟随官方 EOL 表（config/lifecycle.json）：已 EOL 的线不构建。
 
 on:
   push:
-    branches:
-      - 8.8-uos
+    branches: [master]
     paths:
-      - '8.8-uos/Dockerfile'
-      - '8.8-uos/docker-entrypoint.sh'
+      - '*/uos/**'
+      - '*/kylin/**'
+      - 'scripts/**'
+      - 'config/**'
       - '.github/workflows/docker-publish.yml'
-    tags:
-      - 'v*'
   pull_request:
-    branches:
-      - 8.8-uos
+    branches: [master]
     paths:
-      - '8.8-uos/Dockerfile'
-      - '8.8-uos/docker-entrypoint.sh'
+      - '*/uos/**'
+      - '*/kylin/**'
+      - 'scripts/**'
+      - 'config/**'
       - '.github/workflows/docker-publish.yml'
-  # 每周一上午 06:00 (UTC) 自动检测 Redis 8.8 分支是否有新 stable 版本
   schedule:
+    # 每周一 06:00 UTC（北京时间 14:00）
     - cron: '0 6 * * 1'
   workflow_dispatch:
     inputs:
-      push_to_registry:
-        description: 'Push to registry after build'
-        required: false
-        default: 'true'
-        type: boolean
-      redis_version:
-        description: '指定 Redis 8.8.x 版本号；留空则自动获取该分支的最新 stable tag'
+      lines:
+        description: '只处理这些版本线（空格分隔，如 8.8 8.10；留空=按策略自动）'
         required: false
         default: ''
-        type: string
+      variants:
+        description: '只处理这些变体（空格分隔：uos kylin；留空=两个都做）'
+        required: false
+        default: ''
+      redis_version:
+        description: '强制指定 Redis 版本号（如 8.8.4；留空=取上游最新 GA）'
+        required: false
+        default: ''
+      track_lts:
+        description: '自动跟踪最新 LTS(Extended) 版本线'
+        required: false
+        default: true
+        type: boolean
+      scaffold:
+        description: '允许自动创建缺失的版本线目录'
+        required: false
+        default: true
+        type: boolean
+      push_to_registry:
+        description: '构建后推送到 GHCR'
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -40,82 +68,124 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/redis-uos
-  MAJOR_BRANCH: '8.8'
-  BASE_IMAGE_TAG: uos-server-20-1070a:latest
+  IMAGE_NAME: ${{ github.repository_owner }}/redis
+  PLATFORMS: linux/amd64
+
+concurrency:
+  group: redis-images-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build:
+  ############################################
+  # 1. 检测：解析上游版本 → 按 EOL 策略算矩阵 → 落盘改动 → 提交回 master
+  ############################################
+  detect:
+    name: 检测上游版本与构建矩阵
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 需要把版本号变更与 README 更新提交回 master
     outputs:
-      image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-      digest: ${{ steps.build.outputs.digest }}
-      short_sha: ${{ steps.vars.outputs.SHORT_SHA }}
-      date_tag: ${{ steps.vars.outputs.DATE_TAG }}
-      version: ${{ steps.resolve.outputs.version }}
+      matrix: ${{ steps.run.outputs.matrix }}
+      count: ${{ steps.run.outputs.count }}
     steps:
-      - name: Set variables
-        id: vars
-        run: |
-          echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
-          echo "DATE_TAG=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # ------------------------------------------------------------------
-      # 自动检测 8.8.x 最新 stable 版本号
-      # SHA 校验说明：
-      #   Redis 8.8.x 各 stable release 在 https://github.com/redis/redis/releases
-      #   的 assets 数组均为空，无法从该页面自动获取 SHA256 digest，
-      #   因此本 workflow 不再做 SHA 强制校验，Dockerfile 中相关
-      #   REDIS_DOWNLOAD_SHA 行也已注释掉。后续如 Redis 在 release 页面
-      #   上传 manual assets，可在本步加一个 sha256sum 校验逻辑并通过
-      #   build-arg 重新启用 Dockerfile 中的校验。
-      # ------------------------------------------------------------------
-      - name: Resolve latest Redis 8.8.x stable version
-        id: resolve
+      - name: 计算构建矩阵
+        id: run
         env:
-          INPUT_REDIS_VERSION: ${{ inputs.redis_version || '' }}
-          MAJOR_BRANCH: ${{ env.MAJOR_BRANCH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          if [ -n "${INPUT_REDIS_VERSION}" ]; then
-            VERSION="${INPUT_REDIS_VERSION}"
-            echo "Using user-provided version: ${VERSION}"
+          args=()
+          # PR 只预演，不写文件；push 只重建已有版本线，不新增目录
+          case "${{ github.event_name }}" in
+            pull_request)
+              args+=(--dry-run)
+              echo "PR 模式：dry-run，不写文件"
+              ;;
+            push)
+              args+=(--no-scaffold)
+              echo "push 模式：只重建已有版本线"
+              ;;
+            schedule)
+              echo "定时模式：允许自动升版与新增版本线"
+              ;;
+            workflow_dispatch)
+              [ "${{ inputs.track_lts }}" = "false" ] && args+=(--no-track-lts) || true
+              [ "${{ inputs.scaffold }}"  = "false" ] && args+=(--no-scaffold)  || true
+              [ -n "${{ inputs.lines }}" ]    && args+=(--lines "${{ inputs.lines }}")       || true
+              [ -n "${{ inputs.variants }}" ] && args+=(--variants "${{ inputs.variants }}") || true
+              [ -n "${{ inputs.redis_version }}" ] && args+=(--force-version "${{ inputs.redis_version }}") || true
+              echo "手动模式：${args[*]:-默认策略}"
+              ;;
+          esac
+
+          # 空数组在 set -u 下的展开要加保护
+          python3 scripts/ci_detect.py ${args[@]+"${args[@]}"} | tee /tmp/detect.log
+
+          matrix="$(sed -n 's/^MATRIX=//p' /tmp/detect.log | tail -n1)"
+          if [ -z "$matrix" ]; then
+            echo "::error::未能从 detect 输出中解析出构建矩阵"
+            exit 1
+          fi
+          count="$(printf '%s' "$matrix" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)["include"]))')"
+          {
+            echo "matrix=${matrix}"
+            echo "count=${count}"
+          } >> "$GITHUB_OUTPUT"
+          echo "构建矩阵：${count} 个镜像" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 提交版本号与 README 更新
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "无变更，跳过提交"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore(auto): 同步上游 Redis 版本并刷新 README" \
+                     -m "由 .github/workflows/docker-publish.yml 的 detect 作业自动生成。"
+          if git push; then
+            echo "已提交并推送"
           else
-            echo "Querying GitHub for the latest ${MAJOR_BRANCH}.x stable tag..."
-            # GitHub tags API：筛 形如 "8.8.N" 的最大 stable tag（排除 rc/alpha/beta/pre 等）
-            VERSION="$(
-              curl -fsSL "https://api.github.com/repos/redis/redis/tags?per_page=100" \
-                | jq -r --arg branch "${MAJOR_BRANCH}" '
-                    [ .[]
-                      | select(.name | test("^" + $branch + "\\.[0-9]+$"))
-                      | .name ]
-                    | sort -V
-                    | last // empty
-                '
-            )"
-            if [ -z "${VERSION}" ]; then
-              echo "::error::未在 redis/redis 仓库中找到 ${MAJOR_BRANCH}.x 分支的 stable tag"
-              exit 1
-            fi
-            echo "Resolved latest stable tag: ${VERSION}"
+            echo "::warning::提交推送失败（可能受分支保护限制），本次构建继续使用检测到的版本号"
           fi
 
-          {
-            echo "version=${VERSION}"
-            echo "tarball_url=https://github.com/redis/redis/archive/refs/tags/${VERSION}.tar.gz"
-          } >> "$GITHUB_OUTPUT"
+  ############################################
+  # 2. 构建：矩阵 = 版本线 × 变体
+  ############################################
+  build:
+    name: "构建 ${{ matrix.line }}/${{ matrix.variant }} (${{ matrix.version }})"
+    needs: detect
+    if: needs.detect.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      # Redis 源码编译（含 Rust 模块）较重，同时跑太多会拖慢并放大网络抖动影响
+      max-parallel: 2
+      matrix:
+        include: ${{ fromJson(needs.detect.outputs.matrix).include }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Set up QEMU
+      - name: 设置 QEMU
+        if: contains(env.PLATFORMS, 'arm')
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up Docker Buildx
+      - name: 设置 Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to GHCR
+      - name: 登录 GHCR
         if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push_to_registry)
         uses: docker/login-action@v3
         with:
@@ -123,88 +193,105 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
-        id: build
+      - name: 计算 tag
+        id: meta
+        run: |
+          set -euo pipefail
+          IMAGE="${REGISTRY}/${IMAGE_NAME}"
+          {
+            echo "tag1=${IMAGE}:${{ matrix.line }}-${{ matrix.variant }}"
+            echo "tag2=${IMAGE}:${{ matrix.version }}-${{ matrix.variant }}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 构建并推送
         uses: docker/build-push-action@v6
         with:
-          context: 8.8-uos
+          context: ${{ matrix.line }}/${{ matrix.variant }}
+          platforms: ${{ env.PLATFORMS }}
           push: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push_to_registry) }}
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos-${{ steps.resolve.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.vars.outputs.SHORT_SHA }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.DATE_TAG }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
           build-args: |
-            REDIS_VERSION=${{ steps.resolve.outputs.version }}
-            BASE_IMAGE_TAG=${{ env.BASE_IMAGE_TAG }}
-          platforms: linux/amd64
-          no-cache: true
+            REDIS_VERSION=${{ matrix.version }}
+          tags: |
+            ${{ steps.meta.outputs.tag1 }}
+            ${{ steps.meta.outputs.tag2 }}
+          cache-from: type=gha,scope=redis-${{ matrix.line }}-${{ matrix.variant }}
+          cache-to: type=gha,scope=redis-${{ matrix.line }}-${{ matrix.variant }},mode=max
 
-      - name: Build summary
+      - name: 输出摘要
         if: always()
         run: |
-          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
           {
-            echo "- Redis version: \`${{ steps.resolve.outputs.version }}\`"
-            echo "- Tarball URL:   ${{ steps.resolve.outputs.tarball_url }}"
-            echo "- Image:         ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-            echo "- Digest:        ${{ steps.build.outputs.digest }}"
-            echo "- Commit SHA:    \`${{ steps.vars.outputs.SHORT_SHA }}\`"
-            echo "- Date tag:      ${{ steps.vars.outputs.DATE_TAG }}"
-            echo "- Base image:    \`ghcr.io/blueapple168/${{ env.BASE_IMAGE_TAG }}\`"
-            echo ""
-            echo "_注：Redis 8.8.x release 在 https://github.com/redis/redis/releases 无 uploaded assets，未做下载 SHA256 校验。_"
-          } >> $GITHUB_STEP_SUMMARY
-        env:
-          ACTIONS_STEP_DEBUG: true
+            echo "### ${{ matrix.line }}/${{ matrix.variant }} (Redis ${{ matrix.version }})"
+            echo "- LTS: ${{ matrix.lts }}"
+            echo "- tags: \`${{ steps.meta.outputs.tag1 }}\`, \`${{ steps.meta.outputs.tag2 }}\`"
+            echo "- context: \`${{ matrix.line }}/${{ matrix.variant }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-  security-scan:
+  ############################################
+  # 3. 安全扫描（不阻断构建）
+  ############################################
+  scan:
+    name: "扫描 ${{ matrix.line }}/${{ matrix.variant }}"
+    needs: [detect, build]
+    if: needs.detect.outputs.count != '0' && (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push_to_registry))
     runs-on: ubuntu-latest
-    needs: build
-    if: always()
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include: ${{ fromJson(needs.detect.outputs.matrix).include }}
     steps:
-      - name: Run Trivy vulnerability scanner
+      - uses: actions/checkout@v4
+
+      - name: Trivy 扫描
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.version }}-${{ matrix.variant }}
           format: 'sarif'
-          output: 'trivy-results.sarif'
+          output: 'trivy-${{ matrix.line }}-${{ matrix.variant }}.sarif'
           severity: 'CRITICAL,HIGH'
           exit-code: '0'
           ignore-unfixed: true
-          args: |
-            --os-family rhel
-            --os-version 8
-            --pkg-types rpm
-            --ignore-unfixed
-            --no-progress
 
-      - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@v3
+      - name: 上传 SARIF
         if: always()
+        uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: 'trivy-${{ matrix.line }}-${{ matrix.variant }}.sarif'
+          category: 'redis-${{ matrix.line }}-${{ matrix.variant }}'
 
+  ############################################
+  # 4. 打 tag 时创建 Release
+  ############################################
   release:
-    runs-on: ubuntu-latest
-    needs: [build, security-scan]
+    name: 创建 Release
+    needs: [detect, build]
     if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
+      - name: 汇总矩阵
+        id: m
+        run: |
+          echo "matrix=${{ needs.detect.outputs.matrix }}" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            ## Redis ${{ needs.build.outputs.version }} (UOS 1070a, 8.8 分支)
-            ### 镜像信息
-            - **Registry**: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-            - **Tag**: ${{ github.ref_name }}
-            - **Digest**: ${{ needs.build.outputs.digest }}
-            - **Platforms**: linux/amd64
-            - **Base image**: `ghcr.io/blueapple168/${{ env.BASE_IMAGE_TAG }}`
-            ### 快速使用
+            ## Redis 镜像（UOS / Kylin V11）
+
+            | 版本线 | 变体 | Redis 版本 |
+            |--------|------|-----------|
+            | 见下方矩阵 | uos / kylin | 见下方矩阵 |
+
+            ```json
+            ${{ needs.detect.outputs.matrix }}
+            ```
+
+            **拉取**
             ```bash
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:8.8-uos-${{ needs.build.outputs.version }}
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:<版本线>-<变体>
             ```
