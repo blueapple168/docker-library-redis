@@ -125,6 +125,9 @@ RUN set -eux; \
 FROM ghcr.io/blueapple168/${BASE_IMAGE_TAG}
 
 ARG REDIS_VERSION
+# setuptools 元数据里要写入的版本号：默认取构建当天日期（YYYY.MM.DD），
+# 需要可复现构建时用 --build-arg BUILD_DATE=2026.11.09 固定住
+ARG BUILD_DATE=""
 # ARG REDIS_DOWNLOAD_SHA
 LABEL maintainer="blueapple" \
       version="1.0" \
@@ -144,7 +147,10 @@ RUN set -eux; \
     mkdir -p /data /usr/local/lib/redis/modules; \
     chown redis:redis /data; \
     sed -i 's/\$StateMode/ufu/g' /etc/yum.repos.d/UnionTechOS.repo; \
-    sed -i 's/Version: 39\.2\.0/Version: 2026\.10\.08/g' /usr/lib/python3.6/site-packages/setuptools-39.2.0.dist-info/METADATA 2>/dev/null || true; \
+    : "=== setuptools 元数据版本号改成构建当天日期（原先硬编码为 2026.10.08，日期不会随构建更新） ===" ; \
+    BUILD_DATE="${BUILD_DATE:-$(date +%Y.%m.%d)}"; \
+    echo "==> setuptools METADATA version -> ${BUILD_DATE}"; \
+    sed -i "s/Version: 39\.2\.0/Version: ${BUILD_DATE}/g" /usr/lib/python3.6/site-packages/setuptools-39.2.0.dist-info/METADATA 2>/dev/null || true; \
     \
     : "=== yum/dnf 网络调优：默认 timeout=30s 太短，minrate=1000 容易在低速链路上触发下载中止；延长超时到 300s、降低低速阈值到 100 B/s、retries=10 ===" ; \
     if [ -f /etc/yum.conf ]; then \
