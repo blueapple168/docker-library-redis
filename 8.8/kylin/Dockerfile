@@ -32,7 +32,7 @@ ARG BASE_IMAGE_TAG
 # buildx 注入的目标架构
 ARG TARGETARCH
 
-ARG REDIS_VERSION=8.8.3
+ARG REDIS_VERSION=8.8.4
 # ARG REDIS_DOWNLOAD_SHA=
 # auto = x86_64/aarch64 编译 RedisJSON，其它架构跳过；yes/no 可强制
 ARG WITH_MODULES=auto

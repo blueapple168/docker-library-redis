@@ -49,8 +49,8 @@ RC / milestone（`8.12-rc2`、`8.0-m03` 之类）一律不构建。
 <!-- BEGIN REDIS-MATRIX -->
 | 版本线 | Redis | 变体 | 状态 | EOL | 基础镜像 | 镜像 tag |
 |--------|-------|------|------|-----|----------|----------|
-| `8.8` | `8.8.3` | uos | 标准 | TBD | `ghcr.io/blueapple168/uos-server-20-1070a:latest` | `ghcr.io/blueapple168/redis:8.8-uos`<br>`ghcr.io/blueapple168/redis:8.8.3-uos` |
-| `8.8` | `8.8.3` | kylin | 标准 | TBD | `cr.kylinos.cn/kylin/kylin-server-minimal:v11-2503` | `ghcr.io/blueapple168/redis:8.8-kylin`<br>`ghcr.io/blueapple168/redis:8.8.3-kylin` |
+| `8.8` | `8.8.4` | uos | 标准 | TBD | `ghcr.io/blueapple168/uos-server-20-1070a:latest` | `ghcr.io/blueapple168/redis:8.8-uos`<br>`ghcr.io/blueapple168/redis:8.8.4-uos` |
+| `8.8` | `8.8.4` | kylin | 标准 | TBD | `cr.kylinos.cn/kylin/kylin-server-minimal:v11-2503` | `ghcr.io/blueapple168/redis:8.8-kylin`<br>`ghcr.io/blueapple168/redis:8.8.4-kylin` |
 <!-- END REDIS-MATRIX -->
 
 > 上表由 `scripts/sync_readme.py` 根据目录结构 + 各 Dockerfile 的 ARG 自动生成，CI 每次运行会刷新并提交。

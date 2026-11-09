@@ -15,7 +15,7 @@
 # REDIS_VERSION，无需改本 Dockerfile。
 # ==============================================
 
-ARG REDIS_VERSION=8.8.3
+ARG REDIS_VERSION=8.8.4
 ARG BASE_IMAGE_TAG=uos-server-20-1070a:latest
 # ARG REDIS_DOWNLOAD_SHA=811194d6885bd30c66726565365b64a8edddac60eb027a2436adadbd2d419039
 
