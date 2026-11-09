@@ -23,8 +23,9 @@
 
 ## 2. 版本支持策略
 
-构建范围**完全跟随官方生命周期表**（`config/lifecycle.json`，来源
-[Redis Open Source version management](https://redis.io/docs/latest/operate/oss_and_stack/install/version-mgmt/)）：
+构建范围**完全跟随官方的安全支持期（Security Support）**：`config/lifecycle.json` 是
+[Redis Open Source version management](https://redis.io/docs/latest/operate/oss_and_stack/install/version-mgmt/)
+的机器可读副本，并对照 [endoflife.date/redis](https://endoflife.date/redis) 交叉校验。
 
 | 官方分类 | 含义 | 支持期 |
 |----------|------|--------|
@@ -33,14 +34,17 @@
 
 自动构建规则：
 
-1. **只构建官方仍支持的版本线** —— `config/lifecycle.json` 里 EOL 日期已过的线，自动从构建矩阵剔除，
-   README 标为 `EOL`，目录保留不删。
-2. **自动跟踪新版本** —— 上游出现新的 GA 版本线时，自动按模板补齐 `<版本线>/uos`、`<版本线>/kylin` 并构建。
-3. **默认跟踪两条线** —— 最新 GA 线 + 最新 LTS(Extended) 线；已跟踪且未 EOL 的线继续保留。
-   只想跟最新 GA 时，手动触发 workflow 勾选「不跟踪 LTS」。
+1. **构建全部仍在安全支持期的版本线** —— 只要官方 EOL 未过期，stable 与 LTS 一视同仁全部出镜像，
+   而不是只跟「最新一条」。
+2. **已 EOL 的线立刻停手** —— 从构建矩阵剔除，README 标 `EOL`，目录保留不删。构建日志会明确列出
+   「官方已 EOL，不再构建: 5.0(2022-04-27), 6.0(2022-05-31), 7.0(2024-07-29)」。
+3. **新版本线自动补齐** —— 上游出现新的 GA 线时，自动按模板创建 `<版本线>/uos`、`<版本线>/kylin`；
+   若该线还没写进 `lifecycle.json`，会先构建并告警提示补表。
 4. **补丁自动升级** —— 同一版本线内出现新 patch（如 8.8.3 → 8.8.4），自动改 `ARG REDIS_VERSION` 并重建。
+5. **RC / milestone 一律不构建** —— 只认 `x.y.z` 形式的 GA tag。
 
-RC / milestone（`8.12-rc2`、`8.0-m03` 之类）一律不构建。
+> **RedisJSON 的版本差异**：模块自 Redis 8.0 起才并入主仓库，6.2 / 7.2 / 7.4 的源码树里没有
+> `modules/redisjson`。Dockerfile 会按版本自动跳过模块编译（也可用 `--build-arg WITH_MODULES=no` 强制关闭）。
 
 ---
 
@@ -49,8 +53,24 @@ RC / milestone（`8.12-rc2`、`8.0-m03` 之类）一律不构建。
 <!-- BEGIN REDIS-MATRIX -->
 | 版本线 | Redis | 变体 | 状态 | EOL | 基础镜像 | 镜像 tag |
 |--------|-------|------|------|-----|----------|----------|
+| `6.2` | `6.2.24` | uos | LTS | 2027-04-01 | `ghcr.io/blueapple168/uos-server-20-1070a:latest` | `ghcr.io/blueapple168/redis:6.2-uos`<br>`ghcr.io/blueapple168/redis:6.2.24-uos` |
+| `6.2` | `6.2.24` | kylin | LTS | 2027-04-01 | `cr.kylinos.cn/kylin/kylin-server-minimal:v11-2503` | `ghcr.io/blueapple168/redis:6.2-kylin`<br>`ghcr.io/blueapple168/redis:6.2.24-kylin` |
+| `7.2` | `7.2.17` | uos | LTS | 2029-12-01 | `ghcr.io/blueapple168/uos-server-20-1070a:latest` | `ghcr.io/blueapple168/redis:7.2-uos`<br>`ghcr.io/blueapple168/redis:7.2.17-uos` |
+| `7.2` | `7.2.17` | kylin | LTS | 2029-12-01 | `cr.kylinos.cn/kylin/kylin-server-minimal:v11-2503` | `ghcr.io/blueapple168/redis:7.2-kylin`<br>`ghcr.io/blueapple168/redis:7.2.17-kylin` |
+| `7.4` | `7.4.12` | uos | LTS | 2029-12-01 | `ghcr.io/blueapple168/uos-server-20-1070a:latest` | `ghcr.io/blueapple168/redis:7.4-uos`<br>`ghcr.io/blueapple168/redis:7.4.12-uos` |
+| `7.4` | `7.4.12` | kylin | LTS | 2029-12-01 | `cr.kylinos.cn/kylin/kylin-server-minimal:v11-2503` | `ghcr.io/blueapple168/redis:7.4-kylin`<br>`ghcr.io/blueapple168/redis:7.4.12-kylin` |
+| `8.0` | `8.0.6` | uos | 标准 | 2026-12-01 | `ghcr.io/blueapple168/uos-server-20-1070a:latest` | `ghcr.io/blueapple168/redis:8.0-uos`<br>`ghcr.io/blueapple168/redis:8.0.6-uos` |
+| `8.0` | `8.0.6` | kylin | 标准 | 2026-12-01 | `cr.kylinos.cn/kylin/kylin-server-minimal:v11-2503` | `ghcr.io/blueapple168/redis:8.0-kylin`<br>`ghcr.io/blueapple168/redis:8.0.6-kylin` |
+| `8.2` | `8.2.11` | uos | LTS | 2030-09-01 | `ghcr.io/blueapple168/uos-server-20-1070a:latest` | `ghcr.io/blueapple168/redis:8.2-uos`<br>`ghcr.io/blueapple168/redis:8.2.11-uos` |
+| `8.2` | `8.2.11` | kylin | LTS | 2030-09-01 | `cr.kylinos.cn/kylin/kylin-server-minimal:v11-2503` | `ghcr.io/blueapple168/redis:8.2-kylin`<br>`ghcr.io/blueapple168/redis:8.2.11-kylin` |
+| `8.4` | `8.4.8` | uos | 标准 | TBD | `ghcr.io/blueapple168/uos-server-20-1070a:latest` | `ghcr.io/blueapple168/redis:8.4-uos`<br>`ghcr.io/blueapple168/redis:8.4.8-uos` |
+| `8.4` | `8.4.8` | kylin | 标准 | TBD | `cr.kylinos.cn/kylin/kylin-server-minimal:v11-2503` | `ghcr.io/blueapple168/redis:8.4-kylin`<br>`ghcr.io/blueapple168/redis:8.4.8-kylin` |
+| `8.6` | `8.6.8` | uos | 标准 | TBD | `ghcr.io/blueapple168/uos-server-20-1070a:latest` | `ghcr.io/blueapple168/redis:8.6-uos`<br>`ghcr.io/blueapple168/redis:8.6.8-uos` |
+| `8.6` | `8.6.8` | kylin | 标准 | TBD | `cr.kylinos.cn/kylin/kylin-server-minimal:v11-2503` | `ghcr.io/blueapple168/redis:8.6-kylin`<br>`ghcr.io/blueapple168/redis:8.6.8-kylin` |
 | `8.8` | `8.8.4` | uos | 标准 | TBD | `ghcr.io/blueapple168/uos-server-20-1070a:latest` | `ghcr.io/blueapple168/redis:8.8-uos`<br>`ghcr.io/blueapple168/redis:8.8.4-uos` |
 | `8.8` | `8.8.4` | kylin | 标准 | TBD | `cr.kylinos.cn/kylin/kylin-server-minimal:v11-2503` | `ghcr.io/blueapple168/redis:8.8-kylin`<br>`ghcr.io/blueapple168/redis:8.8.4-kylin` |
+| `8.10` | `8.10.3` | uos | 标准 | TBD | `ghcr.io/blueapple168/uos-server-20-1070a:latest` | `ghcr.io/blueapple168/redis:8.10-uos`<br>`ghcr.io/blueapple168/redis:8.10.3-uos` |
+| `8.10` | `8.10.3` | kylin | 标准 | TBD | `cr.kylinos.cn/kylin/kylin-server-minimal:v11-2503` | `ghcr.io/blueapple168/redis:8.10-kylin`<br>`ghcr.io/blueapple168/redis:8.10.3-kylin` |
 <!-- END REDIS-MATRIX -->
 
 > 上表由 `scripts/sync_readme.py` 根据目录结构 + 各 Dockerfile 的 ARG 自动生成，CI 每次运行会刷新并提交。

@@ -61,6 +61,13 @@ RUN set -eux; \
         x86_64|aarch64) BUILD_WITH_MODULES="yes"; INSTALL_RUST_TOOLCHAIN="yes" ;; \
         *) echo >&2 "Modules are NOT supported! unsupported architecture: '$ARCH'" ;; \
     esac; \
+    : "=== 版本闸门：RedisJSON 自 8.0 起才并入主仓库，6.x/7.x 源码树里没有 modules/redisjson ===" ; \
+    REDIS_MAJOR="${REDIS_VERSION%%.*}"; \
+    case "$REDIS_MAJOR" in ''|*[!0-9]*) REDIS_MAJOR=0 ;; esac; \
+    if [ "$REDIS_MAJOR" -lt 8 ]; then \
+        BUILD_WITH_MODULES="no"; \
+        echo "==> Redis ${REDIS_VERSION} 不含内置模块，跳过 RedisJSON 编译"; \
+    fi; \
     \
     if [ "$INSTALL_RUST_TOOLCHAIN" = "yes" ]; then \
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal; \
@@ -77,6 +84,11 @@ RUN set -eux; \
     : 'echo "$REDIS_DOWNLOAD_SHA */tmp/redis.tar.gz" | sha256sum -c -' ; \
     tar -xzf /tmp/redis.tar.gz -C /usr/src/redis --strip-components=1; \
     rm -f /tmp/redis.tar.gz; \
+    : "=== 兜底：源码树里确实没有 modules/redisjson 时不编译模块 ===" ; \
+    if [ "$BUILD_WITH_MODULES" = "yes" ] && [ ! -d /usr/src/redis/modules/redisjson ]; then \
+        echo >&2 "WARN: 未找到 modules/redisjson，改为不编译模块"; \
+        BUILD_WITH_MODULES="no"; \
+    fi; \
     \
     : "=== 关闭 protected-mode，与官方原版逻辑完全一致 ===" ; \
     grep -E '^ *createBoolConfig\("protected-mode",.*, *1 *,.*\),' /usr/src/redis/src/config.c; \

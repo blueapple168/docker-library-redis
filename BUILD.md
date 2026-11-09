@@ -18,6 +18,8 @@
 - `variant` 只允许 `uos`、`kylin`（白名单写在 `scripts/lifecycle.py` 的 `BUILD_VARIANTS`）
 - 构建上下文 = 变体目录本身，所以 `docker build 8.8/uos` 直接可用，不依赖仓库根目录
 - 目录结构就是状态：新增版本线 = 新增目录，CI 会自动识别
+- `<major.minor>` 目录可能与上游共享：例如 `6.2/` 里既有上游模板生成的 `alpine/`、`debian/`，
+  也有本项目手工维护的 `uos/`、`kylin/`；脚本只认白名单里的两个变体
 
 ## 2. 本地构建
 
@@ -57,14 +59,22 @@ docker build --build-arg WITH_MODULES=no    -t redis:8.8-kylin 8.8/kylin
 
 ## 4. 版本策略
 
-构建范围由 `config/lifecycle.json`（官方 EOL 表）决定：
+构建范围 = **官方安全支持期（Security Support）内未过期的全部版本线**，stable 与 LTS 一视同仁：
 
-1. EOL 已过期的版本线 → 从矩阵剔除，README 标 `EOL`，目录保留
-2. 上游新 GA 版本线 → 定时任务自动补 `<line>/uos`、`<line>/kylin` 并构建
-3. 默认跟踪：最新 GA 线 + 最新 LTS(Extended) 线 + 已跟踪且未 EOL 的线
-4. 同一线内新 patch → 自动改 `ARG REDIS_VERSION`
+| 情况 | 处理 |
+|------|------|
+| 在 `config/lifecycle.json` 里、EOL 未过期 | 构建（当前为 6.2 / 7.2 / 7.4 / 8.0 / 8.2 / 8.4 / 8.6 / 8.8 / 8.10） |
+| 已 EOL（5.0 / 6.0 / 7.0） | 剔除矩阵，README 标 `EOL`，目录保留不删 |
+| 上游新 GA 线、表里还没有 | 先构建并告警，提示把 EOL 补进 `lifecycle.json` |
+| 同一线内新 patch | 自动改 `ARG REDIS_VERSION` 并重建 |
+| RC / milestone | 一律不构建（只认 `x.y.z`） |
 
-RC / milestone 不构建。
+注意两点：
+
+- **模块差异**：RedisJSON 自 Redis 8.0 起才并入主仓库，6.2 / 7.x 的源码树里没有 `modules/redisjson`，
+  Dockerfile 会按版本自动跳过模块编译（`WITH_MODULES=no` 可强制关闭）。
+- **构建量**：当前 9 条线 × 2 变体 = 18 个镜像，`max-parallel: 4` 下约 1.5~2 小时；
+  8.x 带 Rust 模块约 25 分钟/个，6.2/7.x 无模块约 10 分钟/个。
 
 ## 5. 脚本
 

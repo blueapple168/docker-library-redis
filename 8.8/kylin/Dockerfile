@@ -101,6 +101,13 @@ RUN set -euxo pipefail; \
         auto) : ;; \
         *) echo "ERROR: WITH_MODULES 只能是 auto/yes/no，收到 '${WITH_MODULES}'" >&2; exit 1 ;; \
     esac; \
+    : "=== 版本闸门：RedisJSON 自 8.0 起才并入主仓库，6.x/7.x 源码树里没有 modules/redisjson ===" ; \
+    REDIS_MAJOR="${REDIS_VERSION%%.*}"; \
+    case "$REDIS_MAJOR" in ''|*[!0-9]*) REDIS_MAJOR=0 ;; esac; \
+    if [ "$REDIS_MAJOR" -lt 8 ]; then \
+        BUILD_WITH_MODULES="no"; \
+        echo "==> Redis ${REDIS_VERSION} 不含内置模块，跳过 RedisJSON 编译"; \
+    fi; \
     echo "==> ARCH=${ARCH} BUILD_WITH_MODULES=${BUILD_WITH_MODULES}"; \
     \
     if [ "$BUILD_WITH_MODULES" = "yes" ]; then \
@@ -120,6 +127,11 @@ RUN set -euxo pipefail; \
     : 'echo "$REDIS_DOWNLOAD_SHA */tmp/redis.tar.gz" | sha256sum -c -' ; \
     tar -xzf /tmp/redis.tar.gz -C /usr/src/redis --strip-components=1; \
     rm -f /tmp/redis.tar.gz; \
+    : "=== 兜底：源码树里确实没有 modules/redisjson 时不编译模块 ===" ; \
+    if [ "$BUILD_WITH_MODULES" = "yes" ] && [ ! -d /usr/src/redis/modules/redisjson ]; then \
+        echo >&2 "WARN: 未找到 modules/redisjson，改为不编译模块"; \
+        BUILD_WITH_MODULES="no"; \
+    fi; \
     \
     : "=== 关闭 protected-mode 默认值（与官方原版逻辑一致） ===" ; \
     grep -E '^ *createBoolConfig\("protected-mode",.*, *1 *,.*\),' /usr/src/redis/src/config.c; \

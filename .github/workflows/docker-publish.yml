@@ -9,7 +9,8 @@ name: Redis 镜像构建（UOS / Kylin V11）
 #   schedule        每周检查上游 GA 版本：自动升 patch、自动新增版本线、刷新 README，然后构建
 #   workflow_dispatch 手动指定版本线 / 变体 / 强制版本号
 #
-# 版本范围严格跟随官方 EOL 表（config/lifecycle.json）：已 EOL 的线不构建。
+# 版本范围严格跟随官方 EOL 表（config/lifecycle.json）：
+#   构建「安全支持期未过期」的全部版本线（stable + LTS），已 EOL 的不再构建。
 
 on:
   push:
@@ -45,11 +46,6 @@ on:
         description: '强制指定 Redis 版本号（如 8.8.4；留空=取上游最新 GA）'
         required: false
         default: ''
-      track_lts:
-        description: '自动跟踪最新 LTS(Extended) 版本线'
-        required: false
-        default: true
-        type: boolean
       scaffold:
         description: '允许自动创建缺失的版本线目录'
         required: false
@@ -114,7 +110,6 @@ jobs:
               echo "定时模式：允许自动升版与新增版本线"
               ;;
             workflow_dispatch)
-              [ "${{ inputs.track_lts }}" = "false" ] && args+=(--no-track-lts) || true
               [ "${{ inputs.scaffold }}"  = "false" ] && args+=(--no-scaffold)  || true
               [ -n "${{ inputs.lines }}" ]    && args+=(--lines "${{ inputs.lines }}")       || true
               [ -n "${{ inputs.variants }}" ] && args+=(--variants "${{ inputs.variants }}") || true
@@ -168,8 +163,9 @@ jobs:
     timeout-minutes: 180
     strategy:
       fail-fast: false
-      # Redis 源码编译（含 Rust 模块）较重，同时跑太多会拖慢并放大网络抖动影响
-      max-parallel: 2
+      # 需要构建「全部安全支持期内」的版本线（约 9 条 × 2 变体），并发太低会跑几小时；
+      # 4 路并行在 GitHub 免费额度（20 并发）内，且不会把上游下载打爆
+      max-parallel: 4
       matrix:
         include: ${{ fromJson(needs.detect.outputs.matrix).include }}
     permissions:

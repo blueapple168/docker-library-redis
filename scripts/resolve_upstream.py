@@ -105,6 +105,29 @@ def build_index(entries):
     return idx
 
 
+def resolve_index(pages=3):
+    """返回 {line: {"version":..., "lts": bool}}。
+
+    releases API 不可用时自动回退 tags API；两者都不可用则抛 RuntimeError
+    （通常是 GitHub 未认证限额 60/h，CI 里带 GITHUB_TOKEN 即可）。
+    """
+    try:
+        entries = collect_releases(pages)
+    except Exception as e:  # noqa: BLE001
+        print(f"WARN: releases API 不可用（{e}），回退到 tags API", file=sys.stderr)
+        try:
+            entries = collect_tags(pages)
+        except Exception as e2:  # noqa: BLE001
+            raise RuntimeError(
+                f"releases 与 tags API 都不可用（{e2}）。"
+                "未认证的 GitHub API 限额为 60 次/小时，设置 GITHUB_TOKEN 可提升到 5000 次/小时。"
+            ) from e2
+    idx = build_index(entries)
+    if not idx:
+        raise RuntimeError("未能从上游解析出任何 GA 版本（检查网络或 API 限额）")
+    return idx
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--line", help="只输出指定版本线的最新版本号")
@@ -126,21 +149,10 @@ def main():
         return 0
 
     try:
-        entries = collect_releases()
-    except Exception as e:  # noqa: BLE001
-        print(f"WARN: releases API 不可用（{e}），回退到 tags API", file=sys.stderr)
-        try:
-            entries = collect_tags()
-        except Exception as e2:  # noqa: BLE001
-            print(f"ERROR: tags API 也不可用（{e2}）", file=sys.stderr)
-            print("提示：未认证的 GitHub API 限额为 60 次/小时；设置 GITHUB_TOKEN 可提升到 5000 次/小时。",
-                  file=sys.stderr)
-            return 3
-
-    idx = build_index(entries)
-    if not idx:
-        print("ERROR: 未能解析出任何 GA 版本，请检查网络或 API 限额", file=sys.stderr)
-        return 1
+        idx = resolve_index()
+    except RuntimeError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 3
 
     if args.line:
         item = idx.get(args.line)

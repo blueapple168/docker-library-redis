@@ -96,7 +96,6 @@ def main():
     ap.add_argument("--lines", default="", help="只处理这些版本线（空格分隔）")
     ap.add_argument("--variants", default="", help="只处理这些变体（空格分隔）")
     ap.add_argument("--force-version", default="", help="强制指定 Redis 版本号")
-    ap.add_argument("--no-track-lts", action="store_true", help="不自动纳入 LTS(Extended) 线")
     ap.add_argument("--no-scaffold", action="store_true", help="不自动创建新目录")
     ap.add_argument("--matrix-file", default="", help="把构建矩阵写入该文件")
     ap.add_argument("--upstream-json", default="", help="离线：从本地 JSON 读取上游版本（测试用）")
@@ -112,10 +111,11 @@ def main():
                     for k, v in cached.get("lines", cached).items()}
         print(f"(离线模式) 上游版本取自 {args.upstream_json}")
     else:
-        upstream = resolve_upstream.build_index(resolve_upstream.collect_releases())
-    if not upstream:
-        print("ERROR: 未解析到任何上游 GA 版本", file=sys.stderr)
-        return 1
+        try:
+            upstream = resolve_upstream.resolve_index()
+        except RuntimeError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
 
     tracked = tracked_dirs()
     tracked_lines = sorted(tracked, key=vkey)
@@ -123,32 +123,42 @@ def main():
     print(f"仓库已跟踪:     {' '.join(tracked_lines) or '(无)'}")
 
     # ---------- 1. 计算目标版本线集合 ----------
-    desired = set(tracked_lines)
-
-    newest = max(upstream, key=vkey)
-    if lifecycle.is_supported(newest, table):
-        desired.add(newest)
-
-    if not args.no_track_lts:
-        lts_candidates = [l for l in upstream
-                          if l in table.get("versions", {})
-                          and lifecycle.is_lts(l, table)
-                          and lifecycle.is_supported(l, table)]
-        if lts_candidates:
-            desired.add(max(lts_candidates, key=vkey))
+    # 策略：构建官方「安全支持期（Security Support）未过期」的全部版本线，
+    # 也就是所有仍在维护的 stable + LTS，直到官方宣布 EOL 为止。
+    #   - 在 lifecycle.json 里且 EOL 未过期 -> 构建
+    #   - 在 lifecycle.json 里且已 EOL     -> 跳过（目录保留，README 标 EOL）
+    #   - 不在表里但上游有 GA              -> 视为刚发布的新线，先构建并提示补表
+    desired, untracked, eol_lines = set(), [], []
+    for line in upstream:
+        it = lifecycle.info(line, table)
+        if it is None:
+            untracked.append(line)
+        elif lifecycle.is_supported(line, table):
+            desired.add(line)
+        else:
+            eol_lines.append((line, it.get("eol")))
+    if eol_lines:
+        print("::notice::官方已 EOL，不再构建: "
+              + ", ".join(f"{l}({e})" for l, e in sorted(eol_lines, key=lambda x: vkey(x[0]))))
+    if untracked:
+        print("::warning::上游有 GA 但不在 config/lifecycle.json 的版本线: "
+              + " ".join(sorted(untracked, key=vkey))
+              + "（本次按新发布处理并构建，请把它们的 EOL 补进表里）")
+        desired |= set(untracked)
 
     if line_filter:
         desired &= line_filter
 
-    # ---------- 2. EOL 闸门 ----------
+    # ---------- 2. EOL 闸门（兜底：filter / 表里已 EOL 的一律剔除） ----------
     buildable, eol_skipped = [], []
     for line in sorted(desired, key=vkey):
         if line not in upstream:
             print(f"::notice::{line}: 上游没有该线的 GA 版本，跳过")
             continue
-        if not lifecycle.is_supported(line, table):
+        it = lifecycle.info(line, table)
+        if it is not None and not lifecycle.is_supported(line, table):
             eol_skipped.append(line)
-            print(f"::warning::{line}: 官方已 EOL（{lifecycle.info(line, table).get('eol')}），不再构建")
+            print(f"::warning::{line}: 官方已 EOL（{it.get('eol')}），不再构建")
             continue
         buildable.append(line)
 
@@ -199,7 +209,8 @@ def main():
     if args.matrix_file:
         pathlib.Path(args.matrix_file).write_text(json.dumps(payload), encoding="utf-8")
     print("MATRIX=" + json.dumps(payload))
-    print(f"待构建 {len(matrix)} 个镜像；EOL 跳过 {len(eol_skipped)} 条线 {eol_skipped or ''}")
+    skipped = sorted({l for l, _ in eol_lines} | set(eol_skipped), key=vkey)
+    print(f"待构建 {len(matrix)} 个镜像；EOL 跳过 {len(skipped)} 条线 {skipped or ''}")
     print(f"文件改动 {len(changes)} 处")
     return 0 if readme_rc == 0 else readme_rc
 
